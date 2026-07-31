@@ -29,9 +29,14 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Video Depth Anything')
     parser.add_argument('--input_video', type=str, default='./assets/example_videos/davis_rollercoaster.mp4')
     parser.add_argument('--output_dir', type=str, default='./outputs')
-    parser.add_argument('--input_size', type=int, default=518)
+    parser.add_argument('--preset', default='fast', choices=['fast', 'quality', 'ultra'],
+                        help='vits speed/quality preset; fast is the default')
+    parser.add_argument('--input_size', type=int, default=None,
+                        help='override the preset inference resolution')
+    parser.add_argument('--temporal-stride', type=int, default=None,
+                        help='override the preset frame sampling stride')
     parser.add_argument('--max_res', type=int, default=1280)
-    parser.add_argument('--encoder', type=str, default='vitl', choices=['vits', 'vitb', 'vitl'])
+    parser.add_argument('--encoder', type=str, default='vits', choices=['vits', 'vitb', 'vitl'])
     parser.add_argument('--max_len', type=int, default=-1, help='maximum length of the input video, -1 means no limit')
     parser.add_argument('--target_fps', type=int, default=-1, help='target fps of the input video, -1 means the original fps')
     parser.add_argument('--metric', action='store_true', help='use metric model')
@@ -45,6 +50,8 @@ if __name__ == '__main__':
                         help='disable reuse of overlap-frame encoder features')
     parser.add_argument('--benchmark', action='store_true',
                         help='run inference and print timing without encoding output videos')
+    parser.add_argument('--save-source', action='store_true',
+                        help='also re-encode a copy of the source video')
     parser.add_argument('--grayscale', action='store_true', help='do not apply colorful palette')
     parser.add_argument('--save_npz', action='store_true', help='save depths as npz')
     parser.add_argument('--save_exr', action='store_true', help='save depths as exr')
@@ -67,6 +74,14 @@ if __name__ == '__main__':
         'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
     }
     checkpoint_name = 'metric_video_depth_anything' if args.metric else 'video_depth_anything'
+    presets = {
+        'quality': (518, 1),
+        'fast': (420, 2),
+        'ultra': (350, 3),
+    }
+    preset_input_size, preset_temporal_stride = presets[args.preset]
+    input_size = args.input_size or preset_input_size
+    temporal_stride = args.temporal_stride or preset_temporal_stride
 
     decoder_batch_size = args.decoder_batch_size or (8 if device.type == 'mps' else 4)
     video_depth_anything = VideoDepthAnything(
@@ -94,16 +109,18 @@ if __name__ == '__main__':
     depths, fps = video_depth_anything.infer_video_depth(
         frames,
         target_fps,
-        input_size=args.input_size,
+        input_size=input_size,
         device=device,
         fp32=args.fp32,
         cache_encoder=not args.no_encoder_cache,
+        temporal_stride=temporal_stride,
     )
     synchronize(device)
     elapsed = time.perf_counter() - start_time
     print(
         f'Inference: {len(frames)} frames in {elapsed:.3f}s '
-        f'({len(frames) / elapsed:.2f} FPS) on {device.type}'
+        f'({len(frames) / elapsed:.2f} FPS) on {device.type}; '
+        f'preset={args.preset}, input={input_size}, temporal_stride={temporal_stride}'
     )
 
     if args.benchmark:
@@ -114,7 +131,8 @@ if __name__ == '__main__':
 
     processed_video_path = os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_src.mp4')
     depth_vis_path = os.path.join(args.output_dir, os.path.splitext(video_name)[0]+'_vis.mp4')
-    save_video(frames, processed_video_path, fps=fps)
+    if args.save_source:
+        save_video(frames, processed_video_path, fps=fps)
     save_video(depths, depth_vis_path, fps=fps, is_depths=True, grayscale=args.grayscale)
 
     if args.save_npz:

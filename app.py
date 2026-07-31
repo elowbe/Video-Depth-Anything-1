@@ -18,6 +18,7 @@ import os
 import torch
 
 from video_depth_anything.video_depth import VideoDepthAnything
+from video_depth_anything.inference_utils import configure_inference, get_default_device
 from utils.dc_utils import read_video_frames, save_video
 
 examples = [
@@ -29,11 +30,19 @@ model_configs = {
     'vitl': {'encoder': 'vitl', 'features': 256, 'out_channels': [256, 512, 1024, 1024]},
 }
 
-encoder='vitl'
+encoder = 'vits'
+device = get_default_device()
 
 video_depth_anything = VideoDepthAnything(**model_configs[encoder])
-video_depth_anything.load_state_dict(torch.load(f'./checkpoints/video_depth_anything_{encoder}.pth', map_location='cpu'), strict=True)
-video_depth_anything = video_depth_anything.to('cuda').eval()
+video_depth_anything.load_state_dict(
+    torch.load(
+        f'./checkpoints/video_depth_anything_{encoder}.pth',
+        map_location='cpu',
+        weights_only=True,
+    ),
+    strict=True,
+)
+video_depth_anything = configure_inference(video_depth_anything, device)
 
 
 def infer_video_depth(
@@ -42,10 +51,16 @@ def infer_video_depth(
     target_fps: int = -1,
     max_res: int = 1280,
     output_dir: str = './outputs',
-    input_size: int = 518,
+    input_size: int = 420,
 ):
     frames, target_fps = read_video_frames(input_video, max_len, target_fps, max_res)
-    depths, fps = video_depth_anything.infer_video_depth(frames, target_fps, input_size=input_size, device='cuda')
+    depths, fps = video_depth_anything.infer_video_depth(
+        frames,
+        target_fps,
+        input_size=input_size,
+        device=device,
+        temporal_stride=2,
+    )
 
     video_name = os.path.basename(input_video)
     if not os.path.exists(output_dir):

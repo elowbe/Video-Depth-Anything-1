@@ -71,7 +71,13 @@ def read_video_frames(video_path, process_length, target_fps=-1, max_res=-1):
 
 
 def save_video(frames, output_video_path, fps=10, is_depths=False, grayscale=False):
-    writer = imageio.get_writer(output_video_path, fps=fps, macro_block_size=1, codec='libx264', ffmpeg_params=['-crf', '18'])
+    writer = imageio.get_writer(
+        output_video_path,
+        fps=fps,
+        macro_block_size=1,
+        codec='libx264',
+        ffmpeg_params=['-crf', '18', '-preset', 'veryfast'],
+    )
     if is_depths:
         try:
             cmap = matplotlib.colormaps.get_cmap("inferno")

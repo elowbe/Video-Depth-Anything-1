@@ -137,6 +137,30 @@ class VideoDepthAnything(nn.Module):
             resized[start:end] = chunk[:, 0].numpy()
         return resized
 
+    @staticmethod
+    def _interpolate_temporal_depths(depths, output_length, stride):
+        if stride == 1:
+            return depths
+
+        interpolated = np.empty(
+            (output_length, depths.shape[-2], depths.shape[-1]),
+            dtype=np.float32,
+        )
+        sample_positions = np.arange(0, output_length, stride)
+        interpolated[sample_positions] = depths
+
+        for offset in range(1, stride):
+            positions = np.arange(offset, output_length, stride)
+            if len(positions) == 0:
+                continue
+            left = positions // stride
+            right = np.minimum(left + 1, len(depths) - 1)
+            weight = np.float32(offset / stride)
+            interpolated[positions] = (
+                depths[left] * (1.0 - weight) + depths[right] * weight
+            )
+        return interpolated
+
     def infer_video_depth(
         self,
         frames,
@@ -145,7 +169,11 @@ class VideoDepthAnything(nn.Module):
         device='cuda',
         fp32=False,
         cache_encoder=True,
+        temporal_stride=1,
     ):
+        if temporal_stride < 1:
+            raise ValueError("temporal_stride must be at least 1")
+
         device = torch.device(device)
         parameter = next(self.parameters())
         expected_dtype = torch.float16 if device.type == "mps" and not fp32 else torch.float32
@@ -154,7 +182,10 @@ class VideoDepthAnything(nn.Module):
         ):
             configure_inference(self, device, fp32=fp32)
 
+        output_video_len = len(frames)
         frame_height, frame_width = frames[0].shape[:2]
+        if temporal_stride > 1:
+            frames = frames[::temporal_stride]
         ratio = max(frame_height, frame_width) / min(frame_height, frame_width)
         if ratio > 1.78:  # we recommend to process video with ratio smaller than 16:9 due to memory limitation
             input_size = int(input_size * 1.777 / ratio)
@@ -269,5 +300,10 @@ class VideoDepthAnything(nn.Module):
             torch.mps.empty_cache()
 
         depths = depth_list_aligned[:org_video_len]
+        depths = self._interpolate_temporal_depths(
+            depths,
+            output_video_len,
+            temporal_stride,
+        )
         depths = self._resize_depths(depths, frame_height, frame_width)
         return depths, target_fps

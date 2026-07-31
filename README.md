@@ -127,6 +127,35 @@ python3 run.py \
   --benchmark
 ```
 
+The small model defaults to the `fast` preset. It estimates every second frame
+at 420-pixel inference resolution and linearly reconstructs the intervening
+depths, so the returned video still contains one temporally smooth depth map
+per source frame.
+
+| Preset | Input size | Temporal stride | Intended use |
+|:-|:-:|:-:|:-|
+| `quality` | 518 | 1 | Original sampling and maximum detail |
+| `fast` (default) | 420 | 2 | More than 2× faster with a modest quality tradeoff |
+| `ultra` | 350 | 3 | Maximum throughput |
+
+Measured on an 11-core M3 Pro using the supplied 1280×720 test clips:
+
+| Test | Quality | Fast | Speedup |
+|:-|--:|--:|--:|
+| Bathhouse, 66 frames | 10.43 s | 4.17 s | **2.50×** |
+| Tokyo, 195 frames | 29.07 s | 8.89 s | **3.27×** |
+
+Use `--preset quality` whenever exact 518-pixel/frame-for-frame inference is
+more important than throughput.
+
+To reproduce the quality-versus-fast comparison on one clip:
+
+```bash
+python3 benchmark_speed.py \
+  --input-video test_videos/bathhouse.mp4 \
+  --max-len 66
+```
+
 The optimized offline path also caches DINO features for the ten overlap
 keyframes, uses fused scaled-dot-product attention, aligns depth at inference
 resolution, and releases MPS cache memory before the final output resize.
@@ -134,9 +163,11 @@ resolution, and releases MPS cache memory before the final output resize.
 Options:
 - `--input_video`: path of input video
 - `--output_dir`: path to save the output results
-- `--input_size` (optional): By default, we use input size `518` for model inference.
+- `--preset` (optional): `fast` (default), `quality`, or `ultra`.
+- `--input_size` (optional): override the preset inference resolution.
+- `--temporal-stride` (optional): override the preset frame sampling stride.
 - `--max_res` (optional): By default, we use maximum resolution `1280` for model inference.
-- `--encoder` (optional): `vits` for Video-Depth-Anything-Small, `vitb` for Video-Depth-Anything-Base, `vitl` for Video-Depth-Anything-Large.
+- `--encoder` (optional): `vits` (default) for Video-Depth-Anything-Small, `vitb` for Video-Depth-Anything-Base, `vitl` for Video-Depth-Anything-Large.
 - `--max_len` (optional): maximum length of the input video, `-1` means no limit
 - `--target_fps` (optional): target fps of the input video, `-1` means the original fps
 - `--metric` (optional): use metric depth models trained on Virtual KITTI and IRS datasets
@@ -145,6 +176,7 @@ Options:
 - `--decoder-batch-size` (optional): decoder micro-batch size. `0` selects a backend-specific default; increase it only if memory permits.
 - `--no-encoder-cache` (optional): disable overlap feature reuse for comparison/debugging.
 - `--benchmark` (optional): report inference FPS without writing videos.
+- `--save-source` (optional): also re-encode a copy of the source video.
 - `--grayscale` (optional): Save the grayscale depth map, without applying color palette.
 - `--save_npz` (optional): Save the depth map in `npz` format.
 - `--save_exr` (optional): Save the depth map in `exr` format.
@@ -163,9 +195,9 @@ python3 run_streaming.py --input_video ./assets/example_videos/davis_rollercoast
 Options:
 - `--input_video`: path of input video
 - `--output_dir`: path to save the output results
-- `--input_size` (optional): By default, we use input size `518` for model inference.
+- `--input_size` (optional): By default, streaming uses input size `420`.
 - `--max_res` (optional): By default, we use maximum resolution `1280` for model inference.
-- `--encoder` (optional): `vits` for Video-Depth-Anything-Small, `vitb` for Video-Depth-Anything-Base, `vitl` for Video-Depth-Anything-Large.
+- `--encoder` (optional): `vits` is the default; `vitb` and `vitl` select the larger models.
 - `--max_len` (optional): maximum length of the input video, `-1` means no limit
 - `--target_fps` (optional): target fps of the input video, `-1` means the original fps
 - `--metric` (optional): use metric depth models trained on Virtual KITTI and IRS datasets
