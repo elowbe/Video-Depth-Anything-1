@@ -15,8 +15,14 @@ import argparse
 import numpy as np
 import os
 import torch
+import time
 
 from video_depth_anything.video_depth import VideoDepthAnything
+from video_depth_anything.inference_utils import (
+    configure_inference,
+    get_default_device,
+    synchronize,
+)
 from utils.dc_utils import read_video_frames, save_video
 
 if __name__ == '__main__':
@@ -29,7 +35,16 @@ if __name__ == '__main__':
     parser.add_argument('--max_len', type=int, default=-1, help='maximum length of the input video, -1 means no limit')
     parser.add_argument('--target_fps', type=int, default=-1, help='target fps of the input video, -1 means the original fps')
     parser.add_argument('--metric', action='store_true', help='use metric model')
-    parser.add_argument('--fp32', action='store_true', help='model infer with torch.float32, default is torch.float16')
+    parser.add_argument('--fp32', action='store_true',
+                        help='force accelerator inference to float32; CPU always uses float32')
+    parser.add_argument('--device', default='auto', choices=['auto', 'cuda', 'mps', 'cpu'],
+                        help='inference backend; auto prefers CUDA, then MPS')
+    parser.add_argument('--decoder-batch-size', type=int, default=0,
+                        help='decoder micro-batch size; 0 auto-tunes by backend')
+    parser.add_argument('--no-encoder-cache', action='store_true',
+                        help='disable reuse of overlap-frame encoder features')
+    parser.add_argument('--benchmark', action='store_true',
+                        help='run inference and print timing without encoding output videos')
     parser.add_argument('--grayscale', action='store_true', help='do not apply colorful palette')
     parser.add_argument('--save_npz', action='store_true', help='save depths as npz')
     parser.add_argument('--save_exr', action='store_true', help='save depths as exr')
@@ -40,7 +55,11 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = get_default_device() if args.device == 'auto' else torch.device(args.device)
+    if device.type == 'cuda' and not torch.cuda.is_available():
+        parser.error('CUDA was requested but is not available')
+    if device.type == 'mps' and not torch.backends.mps.is_available():
+        parser.error('MPS was requested but is not available')
 
     model_configs = {
         'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
@@ -49,12 +68,46 @@ if __name__ == '__main__':
     }
     checkpoint_name = 'metric_video_depth_anything' if args.metric else 'video_depth_anything'
 
-    video_depth_anything = VideoDepthAnything(**model_configs[args.encoder], metric=args.metric)
-    video_depth_anything.load_state_dict(torch.load(f'./checkpoints/{checkpoint_name}_{args.encoder}.pth', map_location='cpu'), strict=True)
-    video_depth_anything = video_depth_anything.to(DEVICE).eval()
+    decoder_batch_size = args.decoder_batch_size or (8 if device.type == 'mps' else 4)
+    video_depth_anything = VideoDepthAnything(
+        **model_configs[args.encoder],
+        metric=args.metric,
+        decoder_batch_size=decoder_batch_size,
+    )
+    video_depth_anything.load_state_dict(
+        torch.load(
+            f'./checkpoints/{checkpoint_name}_{args.encoder}.pth',
+            map_location='cpu',
+            weights_only=True,
+        ),
+        strict=True,
+    )
+    video_depth_anything = configure_inference(
+        video_depth_anything,
+        device,
+        fp32=args.fp32,
+    )
 
     frames, target_fps = read_video_frames(args.input_video, args.max_len, args.target_fps, args.max_res)
-    depths, fps = video_depth_anything.infer_video_depth(frames, target_fps, input_size=args.input_size, device=DEVICE, fp32=args.fp32)
+    synchronize(device)
+    start_time = time.perf_counter()
+    depths, fps = video_depth_anything.infer_video_depth(
+        frames,
+        target_fps,
+        input_size=args.input_size,
+        device=device,
+        fp32=args.fp32,
+        cache_encoder=not args.no_encoder_cache,
+    )
+    synchronize(device)
+    elapsed = time.perf_counter() - start_time
+    print(
+        f'Inference: {len(frames)} frames in {elapsed:.3f}s '
+        f'({len(frames) / elapsed:.2f} FPS) on {device.type}'
+    )
+
+    if args.benchmark:
+        raise SystemExit(0)
 
     video_name = os.path.basename(args.input_video)
     os.makedirs(args.output_dir, exist_ok=True)

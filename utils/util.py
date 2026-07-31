@@ -13,7 +13,7 @@
 # limitations under the License. 
 import numpy as np
 
-def compute_scale_and_shift(prediction, target, mask, scale_only=False):
+def compute_scale_and_shift(prediction, target, mask=None, scale_only=False):
     if scale_only:
         return compute_scale(prediction, target, mask), 0
     else:
@@ -24,14 +24,18 @@ def compute_scale(prediction, target, mask):
     # system matrix: A = [[a_00, a_01], [a_10, a_11]]
     prediction = prediction.astype(np.float32)
     target = target.astype(np.float32)
-    mask = mask.astype(np.float32)
-
-    a_00 = np.sum(mask * prediction * prediction)
-    a_01 = np.sum(mask * prediction)
-    a_11 = np.sum(mask)
+    if mask is None:
+        a_00 = np.sum(prediction * prediction)
+        a_01 = np.sum(prediction)
+        a_11 = prediction.size
+    else:
+        mask = mask.astype(np.float32)
+        a_00 = np.sum(mask * prediction * prediction)
+        a_01 = np.sum(mask * prediction)
+        a_11 = np.sum(mask)
 
     # right hand side: b = [b_0, b_1]
-    b_0 = np.sum(mask * prediction * target)
+    b_0 = np.sum(prediction * target if mask is None else mask * prediction * target)
 
     x_0 = b_0 / (a_00 + 1e-6)
 
@@ -41,14 +45,19 @@ def compute_scale_and_shift_full(prediction, target, mask):
     # system matrix: A = [[a_00, a_01], [a_10, a_11]]
     prediction = prediction.astype(np.float32)
     target = target.astype(np.float32)
-    mask = mask.astype(np.float32)
-
-    a_00 = np.sum(mask * prediction * prediction)
-    a_01 = np.sum(mask * prediction)
-    a_11 = np.sum(mask)
-
-    b_0 = np.sum(mask * prediction * target)
-    b_1 = np.sum(mask * target)
+    if mask is None:
+        a_00 = np.sum(prediction * prediction)
+        a_01 = np.sum(prediction)
+        a_11 = prediction.size
+        b_0 = np.sum(prediction * target)
+        b_1 = np.sum(target)
+    else:
+        mask = mask.astype(np.float32)
+        a_00 = np.sum(mask * prediction * prediction)
+        a_01 = np.sum(mask * prediction)
+        a_11 = np.sum(mask)
+        b_0 = np.sum(mask * prediction * target)
+        b_1 = np.sum(mask * target)
 
     x_0 = 1
     x_1 = 0

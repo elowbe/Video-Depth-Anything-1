@@ -5,6 +5,7 @@
 # Original file is released under [ MIT License license], with the full license text available at [https://github.com/Tencent/DepthCrafter?tab=License-1-ov-file].
 import numpy as np
 import matplotlib.cm as cm
+import matplotlib
 import imageio
 try:
     from decord import VideoReader, cpu
@@ -72,7 +73,11 @@ def read_video_frames(video_path, process_length, target_fps=-1, max_res=-1):
 def save_video(frames, output_video_path, fps=10, is_depths=False, grayscale=False):
     writer = imageio.get_writer(output_video_path, fps=fps, macro_block_size=1, codec='libx264', ffmpeg_params=['-crf', '18'])
     if is_depths:
-        colormap = np.array(cm.get_cmap("inferno").colors)
+        try:
+            cmap = matplotlib.colormaps.get_cmap("inferno")
+        except AttributeError:
+            cmap = cm.get_cmap("inferno")
+        colormap = np.asarray(cmap(np.linspace(0, 1, 256)))[:, :3]
         d_min, d_max = frames.min(), frames.max()
         for i in range(frames.shape[0]):
             depth = frames[i]

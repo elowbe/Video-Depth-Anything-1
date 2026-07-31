@@ -18,7 +18,6 @@ try:
 
     XFORMERS_AVAILABLE = True
 except ImportError:
-    print("xFormers not available")
     XFORMERS_AVAILABLE = False
 
 
@@ -300,15 +299,20 @@ class TemporalAttention(CrossAttention):
             # Some versions of xformers return output in fp32, cast it back to the dtype of the input
             hidden_states = hidden_states.to(query.dtype)
         else:
-            query = self.reshape_heads_to_batch_dim(query)
-            key = self.reshape_heads_to_batch_dim(key)
-            value = self.reshape_heads_to_batch_dim(value)
-
-            if self._slice_size is None or query.shape[0] // self._slice_size == 1:
-                hidden_states = self._attention(query, key, value, attention_mask)
-            else:
-                raise NotImplementedError
-                # hidden_states = self._sliced_attention(query, key, value, sequence_length, dim, attention_mask)
+            batch_size, query_length, _ = query.shape
+            key_length = key.shape[1]
+            head_dim = dim // self.heads
+            query = query.view(batch_size, query_length, self.heads, head_dim).transpose(1, 2)
+            key = key.view(batch_size, key_length, self.heads, head_dim).transpose(1, 2)
+            value = value.view(batch_size, key_length, self.heads, head_dim).transpose(1, 2)
+            hidden_states = F.scaled_dot_product_attention(
+                query,
+                key,
+                value,
+                attn_mask=attention_mask,
+                dropout_p=0.0,
+            )
+            hidden_states = hidden_states.transpose(1, 2).reshape(batch_size, query_length, dim)
 
         # linear proj
         hidden_states = self.to_out[0](hidden_states)

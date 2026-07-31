@@ -21,8 +21,7 @@ import numpy as np
 from .dinov2 import DINOv2
 from .dpt_temporal import DPTHeadTemporal
 from .util.transform import Resize, NormalizeImage, PrepareForNet
-
-from utils.util import compute_scale_and_shift, get_interpolate_frames
+from .inference_utils import configure_inference, inference_context
 
 # infer settings, do not change
 INFER_LEN = 32
@@ -75,6 +74,15 @@ class VideoDepthAnything(nn.Module):
         return depth.squeeze(1).unflatten(0, (B, T)), cur_cached_hidden_state_list # return shape [B, T, H, W]
     
     def infer_video_depth_one(self, frame, input_size=518, device='cuda', fp32=False):
+        device = torch.device(device)
+        parameter = next(self.parameters())
+        expected_dtype = torch.float16 if device.type == "mps" and not fp32 else torch.float32
+        if parameter.device != device or (
+            device.type == "mps" and parameter.dtype != expected_dtype
+        ):
+            configure_inference(self, device, fp32=fp32)
+        model_dtype = next(self.parameters()).dtype
+
         self.id += 1
 
         if self.transform is None:  # first frame
@@ -103,10 +111,10 @@ class VideoDepthAnything(nn.Module):
 
             # Inference the first frame
             cur_list = [torch.from_numpy(self.transform({'image': frame.astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0)]
-            cur_input = torch.cat(cur_list, dim=1).to(device)
+            cur_input = torch.cat(cur_list, dim=1).to(device=device, dtype=model_dtype)
             
-            with torch.no_grad():
-                with torch.autocast(device_type=device, enabled=(not fp32)):
+            inference_mode, autocast = inference_context(device, fp32=fp32)
+            with inference_mode, autocast:
                     cur_feature = self.forward_features(cur_input)
                     x_shape = cur_input.shape
                     depth, cached_hidden_state_list = self.forward_depth(cur_feature, x_shape)
@@ -125,9 +133,9 @@ class VideoDepthAnything(nn.Module):
             assert frame_width == self.frame_width
 
             # infer feature
-            cur_input = torch.from_numpy(self.transform({'image': frame.astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0).to(device)
-            with torch.no_grad():
-                with torch.autocast(device_type=device, enabled=(not fp32)):
+            cur_input = torch.from_numpy(self.transform({'image': frame.astype(np.float32) / 255.0})['image']).unsqueeze(0).unsqueeze(0).to(device=device, dtype=model_dtype)
+            inference_mode, autocast = inference_context(device, fp32=fp32)
+            with inference_mode, autocast:
                     cur_feature = self.forward_features(cur_input)
                     x_shape = cur_input.shape
 
@@ -140,8 +148,8 @@ class VideoDepthAnything(nn.Module):
             cur_cache = [torch.cat([h[i] for h in cur_list], dim=1) for i in range(len(cur_list[0]))]
 
             # infer depth
-            with torch.no_grad():
-                with torch.autocast(device_type=device, enabled=(not fp32)):
+            inference_mode, autocast = inference_context(device, fp32=fp32)
+            with inference_mode, autocast:
                     depth, new_cache = self.forward_depth(cur_feature, x_shape, cached_hidden_state_list=cur_cache)
 
             depth = depth.to(cur_input.dtype)

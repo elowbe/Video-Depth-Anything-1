@@ -166,6 +166,7 @@ class DinoVisionTransformer(nn.Module):
         self.head = nn.Identity()
 
         self.mask_token = nn.Parameter(torch.zeros(1, embed_dim))
+        self._pos_embed_cache = {}
 
         self.init_weights()
 
@@ -182,7 +183,17 @@ class DinoVisionTransformer(nn.Module):
         N = self.pos_embed.shape[1] - 1
         if npatch == N and w == h:
             return self.pos_embed
+        cache_key = (npatch, w, h, str(x.device), previous_dtype)
+        if not self.training and cache_key in self._pos_embed_cache:
+            return self._pos_embed_cache[cache_key]
+
         pos_embed = self.pos_embed.float()
+        output_device = x.device
+        # Older PyTorch releases do not implement bicubic interpolation on
+        # MPS. This tiny, one-time positional resize is cheap on CPU and its
+        # result is cached for every later encoder window.
+        if output_device.type == "mps":
+            pos_embed = pos_embed.cpu()
         class_pos_embed = pos_embed[:, 0]
         patch_pos_embed = pos_embed[:, 1:]
         dim = x.shape[-1]
@@ -207,7 +218,11 @@ class DinoVisionTransformer(nn.Module):
         assert int(w0) == patch_pos_embed.shape[-2]
         assert int(h0) == patch_pos_embed.shape[-1]
         patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, -1, dim)
-        return torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1).to(previous_dtype)
+        result = torch.cat((class_pos_embed.unsqueeze(0), patch_pos_embed), dim=1)
+        result = result.to(device=output_device, dtype=previous_dtype)
+        if not self.training:
+            self._pos_embed_cache[cache_key] = result
+        return result
 
     def prepare_tokens_with_masks(self, x, masks=None):
         B, nc, w, h = x.shape

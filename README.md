@@ -115,6 +115,22 @@ python3 run.py --input_video ./assets/example_videos/davis_rollercoaster.mp4 --o
 python3 run.py --input_video ./assets/example_videos/davis_rollercoaster.mp4 --output_dir ./outputs --encoder vitl --metric
 ```
 
+The inference runner automatically selects CUDA, then Apple MPS, then CPU.
+Apple Silicon uses explicit FP16 because older PyTorch versions do not support
+MPS autocast. CUDA uses autocast plus fused attention. To benchmark the small
+model without spending time encoding output videos:
+
+```bash
+python3 run.py \
+  --input_video ./assets/example_videos/davis_rollercoaster.mp4 \
+  --encoder vits \
+  --benchmark
+```
+
+The optimized offline path also caches DINO features for the ten overlap
+keyframes, uses fused scaled-dot-product attention, aligns depth at inference
+resolution, and releases MPS cache memory before the final output resize.
+
 Options:
 - `--input_video`: path of input video
 - `--output_dir`: path to save the output results
@@ -124,7 +140,11 @@ Options:
 - `--max_len` (optional): maximum length of the input video, `-1` means no limit
 - `--target_fps` (optional): target fps of the input video, `-1` means the original fps
 - `--metric` (optional): use metric depth models trained on Virtual KITTI and IRS datasets
-- `--fp32` (optional): Use `fp32` precision for inference. By default, we use `fp16`.
+- `--fp32` (optional): Force accelerator inference to `fp32`. CUDA/MPS default to `fp16`; CPU uses `fp32`.
+- `--device` (optional): `auto` (default), `cuda`, `mps`, or `cpu`.
+- `--decoder-batch-size` (optional): decoder micro-batch size. `0` selects a backend-specific default; increase it only if memory permits.
+- `--no-encoder-cache` (optional): disable overlap feature reuse for comparison/debugging.
+- `--benchmark` (optional): report inference FPS without writing videos.
 - `--grayscale` (optional): Save the grayscale depth map, without applying color palette.
 - `--save_npz` (optional): Save the depth map in `npz` format.
 - `--save_exr` (optional): Save the depth map in `exr` format.

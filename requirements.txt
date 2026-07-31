@@ -7,7 +7,8 @@ pillow
 imageio==2.37.0
 imageio-ffmpeg==0.4.7
 decord
-xformers==0.0.23
+# PyTorch SDPA is used on both CUDA and MPS. xFormers remains an optional
+# CUDA-only acceleration package and is intentionally not required on macOS.
 einops==0.4.1
 easydict
 tqdm

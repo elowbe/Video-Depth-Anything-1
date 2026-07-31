@@ -23,7 +23,6 @@ try:
 
     XFORMERS_AVAILABLE = True
 except ImportError:
-    print("xFormers not available")
     XFORMERS_AVAILABLE = False
 
 
@@ -350,7 +349,7 @@ class GELU(nn.Module):
     def gelu(self, gate):
         if gate.device.type != "mps":
             return F.gelu(gate)
-        # mps: gelu is not implemented for float16
+        # MPS GELU is unavailable for float16 on some supported torch builds.
         return F.gelu(gate.to(dtype=torch.float32)).to(dtype=gate.dtype)
 
     def forward(self, hidden_states):
@@ -376,7 +375,7 @@ class GEGLU(nn.Module):
     def gelu(self, gate):
         if gate.device.type != "mps":
             return F.gelu(gate)
-        # mps: gelu is not implemented for float16
+        # MPS GELU is unavailable for float16 on some supported torch builds.
         return F.gelu(gate.to(dtype=torch.float32)).to(dtype=gate.dtype)
 
     def forward(self, hidden_states):

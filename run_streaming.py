@@ -19,6 +19,7 @@ import time
 import cv2
 
 from video_depth_anything.video_depth_stream import VideoDepthAnything
+from video_depth_anything.inference_utils import configure_inference, get_default_device
 from utils.dc_utils import save_video
 
 if __name__ == '__main__':
@@ -31,12 +32,19 @@ if __name__ == '__main__':
     parser.add_argument('--max_len', type=int, default=-1, help='maximum length of the input video, -1 means no limit')
     parser.add_argument('--target_fps', type=int, default=-1, help='target fps of the input video, -1 means the original fps')
     parser.add_argument('--metric', action='store_true', help='use metric model')
-    parser.add_argument('--fp32', action='store_true', help='model infer with torch.float32, default is torch.float16')
+    parser.add_argument('--fp32', action='store_true',
+                        help='force accelerator inference to float32; CPU always uses float32')
+    parser.add_argument('--device', default='auto', choices=['auto', 'cuda', 'mps', 'cpu'],
+                        help='inference backend; auto prefers CUDA, then MPS')
     parser.add_argument('--grayscale', action='store_true', help='do not apply colorful palette')
 
     args = parser.parse_args()
 
-    DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
+    device = get_default_device() if args.device == 'auto' else torch.device(args.device)
+    if device.type == 'cuda' and not torch.cuda.is_available():
+        parser.error('CUDA was requested but is not available')
+    if device.type == 'mps' and not torch.backends.mps.is_available():
+        parser.error('MPS was requested but is not available')
 
     model_configs = {
         'vits': {'encoder': 'vits', 'features': 64, 'out_channels': [48, 96, 192, 384]},
@@ -46,8 +54,15 @@ if __name__ == '__main__':
     checkpoint_name = 'metric_video_depth_anything' if args.metric else 'video_depth_anything'
 
     video_depth_anything = VideoDepthAnything(**model_configs[args.encoder])
-    video_depth_anything.load_state_dict(torch.load(f'./checkpoints/{checkpoint_name}_{args.encoder}.pth', map_location='cpu'), strict=True)
-    video_depth_anything = video_depth_anything.to(DEVICE).eval()
+    video_depth_anything.load_state_dict(
+        torch.load(
+            f'./checkpoints/{checkpoint_name}_{args.encoder}.pth',
+            map_location='cpu',
+            weights_only=True,
+        ),
+        strict=True,
+    )
+    video_depth_anything = configure_inference(video_depth_anything, device, fp32=args.fp32)
 
     cap = cv2.VideoCapture(args.input_video)
     original_fps = cap.get(cv2.CAP_PROP_FPS)
@@ -77,7 +92,7 @@ if __name__ == '__main__':
                 frame = cv2.resize(frame, (width, height))  # Resize frame
 
             # Inference depth
-            depth = video_depth_anything.infer_video_depth_one(frame, input_size=args.input_size, device=DEVICE, fp32=args.fp32)
+            depth = video_depth_anything.infer_video_depth_one(frame, input_size=args.input_size, device=device, fp32=args.fp32)
             depths.append(depth)
         frame_count += 1
         if frame_count % 50 == 0:
